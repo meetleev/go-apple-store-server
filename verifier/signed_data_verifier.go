@@ -25,28 +25,6 @@ func CertFromBase64(base64Cert string) ([]*x509.Certificate, error) {
 	return x509.ParseCertificates(certBytes)
 }
 
-func DecodeAndVerifySignedPayload[T any](p *SignedDataVerifier, signedData string, payload T) (T, error) {
-	v, err := p.Parse(signedData, payload)
-	if err != nil {
-		var zero T
-		return zero, err
-	}
-	if !v.Valid {
-		var zero T
-		return zero, errors.New("signed payload verify failed")
-	}
-	return payload, nil
-}
-
-func DecodeSignedPayload[T any](p *SignedDataVerifier, signedData string, payload T) (T, error) {
-	_, err := p.Parse(signedData, payload)
-	if err != nil {
-		var zero T
-		return zero, err
-	}
-	return payload, nil
-}
-
 type JWTSignData struct {
 	Raw       string                 // Raw contains the raw token.  Populated when you [Parse] a token
 	Method    jwt.SigningMethod      // Method is the signing method used or to be used
@@ -227,6 +205,28 @@ func (p *SignedDataVerifier) verifyCertificateChain(leaf *x509.Certificate, inte
 		return nil, errors.New("leaf certificate public key is not ecdsa")
 	}
 	return pubKey, err
+}
+func (p *SignedDataVerifier) DecodeAndVerifySignedPayload(signedData string, payload interface{}) error {
+	v, err := p.Parse(signedData, payload)
+	if err != nil {
+		return err
+	}
+	if !v.Valid {
+		return errors.New("signed payload verify failed")
+	}
+	err = p.validateClaims(payload)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *SignedDataVerifier) DecodeSignedPayload(signedData string, payload interface{}) error {
+	_, err := p.Parse(signedData, payload)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 type bundleIDProvider interface {
