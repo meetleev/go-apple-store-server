@@ -1,17 +1,83 @@
 package models
 
+import "github.com/meetleev/go-apple-store-server/types"
+
+type RevocationType = string
+
+const (
+	// The transaction has a full refund.
+	RevocationTypeRefundFull RevocationType = "REFUND_FULL"
+	// The transaction has a prorated refund.
+	RevocationTypeRefundProrated RevocationType = "REFUND_PRORATED"
+	// The transaction is revoked from Family Sharing.
+	RevocationTypeFamilyRevoked RevocationType = "FAMILY_REVOKED"
+)
+
+type transactionCommitmentInfo struct {
+	// Minimum: 1 Maximum: 12
+	BillingPeriodNumber   int32 `json:"billingPeriodNumber"`
+	CommitmentExpiresDate int64 `json:"commitmentExpiresDate"`
+	CommitmentPrice       int64 `json:"commitmentPrice"`
+	TotalBillingPeriods   int32 `json:"totalBillingPeriods"`
+}
+
+type advancedCommerceRefund struct {
+	RefundAmount int64 `json:"refundAmount"`
+	RefundDate   int64 `json:"refundDate"`
+	/*
+		Possible Values
+		UNINTENDED_PURCHASE
+		FULFILLMENT_ISSUE
+		UNSATISFIED_WITH_PURCHASE
+		LEGAL
+		OTHER
+		MODIFY_ITEMS_REFUND
+		SIMULATE_REFUND_DECLINE
+	*/
+	RefundReason string `json:"refundReason"`
+	/*
+		Possible Values:
+		FULL
+		PRORATED
+		CUSTOM
+	*/
+	RefundType string `json:"refundType"`
+}
+
+type advancedCommerceTransactionItem struct {
+	SKU            string                    `json:"SKU"`
+	Description    string                    `json:"description"`
+	DisplayName    string                    `json:"displayName"`
+	Offer          *advancedCommerceOffer    `json:"offer"`
+	Price          int64                     `json:"price"`
+	Refunds        []*advancedCommerceRefund `json:"refunds"`
+	RevocationDate int64                     `json:"revocationDate"`
+}
+type advancedCommerceTransactionInfo struct {
+	Descriptors        *advancedCommerceDescriptors       `json:"descriptors"`
+	EstimatedTax       int64                              `json:"estimatedTax"`
+	Items              []*advancedCommerceTransactionItem `json:"items"`
+	Period             string                             `json:"period"`
+	RequestReferenceId string                             `json:"requestReferenceId"`
+	TaxCode            string                             `json:"taxCode"`
+	TaxExclusivePrice  int64                              `json:"taxExclusivePrice"`
+	TaxRate            string                             `json:"taxRate"`
+}
+
 // JWSTransactionDecodedPayload
 // A decoded payload that contains transaction information.
 type JWSTransactionDecodedPayload struct {
 	// A UUID you create at the time of purchase that associates the transaction with a customer on your own service.
 	// If your app doesn’t provide an appAccountToken, this string is empty.
 	AppAccountToken string `json:"appAccountToken"`
+	// The unique identifier of the app download transaction.
+	AppTransactionId string `json:"appTransactionId"`
 	// The bundle identifier of the app.
 	BundleId string `json:"bundleId"`
 	// The three-letter ISO 4217 currency code associated with the price parameter. This value is present only if price is present.
 	Currency string `json:"currency"`
 	// The server environment, either sandbox or production.
-	Environment Environment `json:"environment"`
+	Environment types.Environment `json:"environment"`
 	// The UNIX time, in milliseconds, that the subscription expires or renews.
 	ExpiresDate int64 `json:"expiresDate"`
 	// A string that describes whether the transaction was purchased by the customer, or is available to them through Family Sharing.
@@ -22,6 +88,8 @@ type JWSTransactionDecodedPayload struct {
 	OfferDiscountType string `json:"offerDiscountType"`
 	// The identifier that contains the offer code or the promotional offer identifier.
 	OfferIdentifier string `json:"offerIdentifier"`
+	// The duration of the offer applied to the transaction. This field is in ISO 8601 duration format.
+	OfferPeriod string `json:"offerPeriod"`
 	// A value that represents the promotional offer type.
 	OfferType int32 `json:"offerType"`
 	// The UNIX time, in milliseconds, that represents the purchase date of the original transaction identifier.
@@ -40,6 +108,8 @@ type JWSTransactionDecodedPayload struct {
 	RevocationDate int64 `json:"revocationDate"`
 	// The reason that the App Store refunded the transaction or revoked it from Family Sharing.
 	RevocationReason int32 `json:"revocationReason"`
+	// The type of the refund or revocation that applies to the transaction.
+	RevocationType RevocationType `json:"revocationType"`
 	// The UNIX time, in milliseconds, that the App Store signed the JSON Web Signature (JWS) data.
 	SignedDate int64 `json:"signedDate"`
 	// The three-letter code that represents the country or region associated with the App Store storefront for the purchase.
@@ -53,11 +123,25 @@ type JWSTransactionDecodedPayload struct {
 	// The reason for the purchase transaction, which indicates whether it’s a customer’s purchase or a renewal for an auto-renewable subscription that the system initates.
 	TransactionReason string `json:"transactionReason"`
 	// The type of the in-app purchase.
-	PurchaseType PurchaseType `json:"type"`
+	PurchaseType types.PurchaseType `json:"type"`
 	// The unique identifier of subscription purchase events across devices, including subscription renewals.
 	WebOrderLineItemId string `json:"webOrderLineItemId"`
+	// Transaction information that is present only for Advanced Commerce SKUs.
+	AdvancedCommerceInfo *advancedCommerceTransactionInfo `json:"advancedCommerceInfo,omitempty"`
+	// Possible Values: BILLED_UPFRONT, MONTHLY
+	BillingPlanType string `json:"billingPlanType,omitempty"`
+
+	CommitmentInfo *transactionCommitmentInfo `json:"commitmentInfo,omitempty"`
 }
 
 func (J *JWSTransactionDecodedPayload) Validate() error {
 	return nil
+}
+
+func (J *JWSTransactionDecodedPayload) BundleID() string {
+	return J.BundleId
+}
+
+func (J *JWSTransactionDecodedPayload) EnvironmentValue() string {
+	return string(J.Environment)
 }

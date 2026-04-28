@@ -5,12 +5,15 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
-	"github.com/meetleev/go-apple-store-server/internal"
-	"github.com/meetleev/go-apple-store-server/models"
-	logger "github.com/sirupsen/logrus"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
+
+	"github.com/meetleev/go-apple-store-server/internal"
+	"github.com/meetleev/go-apple-store-server/models"
+	"github.com/meetleev/go-apple-store-server/types"
+	logger "github.com/sirupsen/logrus"
 )
 
 const (
@@ -45,7 +48,7 @@ type AppStoreServerAPIClient struct {
 	urlBase  string
 }
 
-func NewAPIClientWithLocalPrivateKeyFilePath(privateKeyFilePath, keyId, issuer, bundleId string, environment models.Environment) (*AppStoreServerAPIClient, error) {
+func NewAPIClientWithLocalPrivateKeyFilePath(privateKeyFilePath, keyId, issuer, bundleId string, environment types.Environment) (*AppStoreServerAPIClient, error) {
 	privateKey, err := PrivateKeyFromFile(privateKeyFilePath)
 	if nil != err {
 		return nil, err
@@ -57,12 +60,12 @@ func NewAPIClientWithLocalPrivateKeyFilePath(privateKeyFilePath, keyId, issuer, 
 
 func NewAPIClient(privateKey *ecdsa.PrivateKey, keyId, issuer, bundleId string) *AppStoreServerAPIClient {
 	p := &AppStoreServerAPIClient{privateKey: privateKey, keyId: keyId, BundleId: bundleId, issuer: issuer}
-	p.SetEnv(models.EnvProduct)
+	p.SetEnv(types.EnvProduction)
 	return p
 }
 
-func (c *AppStoreServerAPIClient) SetEnv(environment models.Environment) {
-	if models.EnvProduct == environment {
+func (c *AppStoreServerAPIClient) SetEnv(environment types.Environment) {
+	if types.EnvProduction == environment {
 		c.urlBase = ProductionUrl
 	} else {
 		c.urlBase = SandboxUrl
@@ -82,7 +85,7 @@ func (c *AppStoreServerAPIClient) makeRequest(path, method string, options ...in
 	if nil != reqData.Body {
 		body, err := json.Marshal(reqData.Body)
 		if err != nil {
-			logger.Error("json marshal error: %v", err)
+			logger.Errorf("json marshal error: %v", err)
 			return nil, err
 		}
 		bodyReader = bytes.NewBuffer(body)
@@ -90,21 +93,23 @@ func (c *AppStoreServerAPIClient) makeRequest(path, method string, options ...in
 
 	req, err := http.NewRequest(method, fmt.Sprintf("%s%s", c.urlBase, path), bodyReader)
 	if err != nil {
-		logger.Error("Error creating request: %v", err)
+		logger.Errorf("Error creating request: %v", err)
 		return nil, err
 	}
 
 	token, err := c.generateBearerToken()
 	if err != nil {
-		logger.Error("Error jwt token: %v", err)
+		logger.Errorf("Error jwt token: %v", err)
 		return nil, err
 	}
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
 	req.Header.Add("Accept", "application/json")
 	if nil != reqData.QueryParameters {
+		query := req.URL.Query()
 		for k, v := range reqData.QueryParameters {
-			req.URL.Query()[k] = v
+			query[k] = v
 		}
+		req.URL.RawQuery = query.Encode()
 	}
 	if nil != reqData.Body {
 		req.Header.Add("Content-Type", "application/json")
@@ -112,7 +117,7 @@ func (c *AppStoreServerAPIClient) makeRequest(path, method string, options ...in
 	// 发起请求
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Error("Error making request: %v", err)
+		logger.Errorf("Error making request: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -165,11 +170,11 @@ func (c *AppStoreServerAPIClient) GetTransactionInfo(transactionId string) (*mod
 // @return A response that contains status information for all of a customer’s auto-renewable subscriptions in your app.
 // @throws APIException If a response was returned indicating the request could not be processed
 // {@link https://developer.apple.com/documentation/appstoreserverapi/get_all_subscription_statuses Get All Subscription Statuses}
-func (c *AppStoreServerAPIClient) GetAllSubscriptionStatuses(transactionId string, status []models.Status) (*models.StatusResponse, error) {
+func (c *AppStoreServerAPIClient) GetAllSubscriptionStatuses(transactionId string, status []types.Status) (*models.StatusResponse, error) {
 	query := make(map[string][]string)
 	var statusList []string
 	for _, v := range status {
-		statusList = append(statusList, string(v))
+		statusList = append(statusList, strconv.FormatInt(int64(v), 10))
 	}
 	if 0 < len(statusList) {
 		query["status"] = statusList

@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/golang-jwt/jwt/v5"
 	"strings"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/meetleev/go-apple-store-server/types"
 )
 
 const rootCaBase64Encoded = "MIICQzCCAcmgAwIBAgIILcX8iNLFS5UwCgYIKoZIzj0EAwMwZzEbMBkGA1UEAwwSQXBwbGUgUm9vdCBDQSAtIEczMSYwJAYDVQQLDB1BcHBsZSBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTETMBEGA1UECgwKQXBwbGUgSW5jLjELMAkGA1UEBhMCVVMwHhcNMTQwNDMwMTgxOTA2WhcNMzkwNDMwMTgxOTA2WjBnMRswGQYDVQQDDBJBcHBsZSBSb290IENBIC0gRzMxJjAkBgNVBAsMHUFwcGxlIENlcnRpZmljYXRpb24gQXV0aG9yaXR5MRMwEQYDVQQKDApBcHBsZSBJbmMuMQswCQYDVQQGEwJVUzB2MBAGByqGSM49AgEGBSuBBAAiA2IABJjpLz1AcqTtkyJygRMc3RCV8cWjTnHcFBbZDuWmBSp3ZHtfTjjTuxxEtX/1H7YyYl3J6YRbTzBPEVoA/VhYDKX1DyxNB0cTddqXl5dvMVztK517IDvYuVTZXpmkOlEKMaNCMEAwHQYDVR0OBBYEFLuw3qFYM4iapIqZ3r6966/ayySrMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMDA2gAMGUCMQCD6cHEFl4aXTQY2e3v9GwOAEZLuN+yRhHFD/3meoyhpmvOwgPUnPWTxnS4at+qIxUCMG1mihDK1A3UT82NQz60imOlM27jbdoXt2QfyFMm+YhidDkLF1vLUagM6BgD56KyKA=="
@@ -23,6 +25,28 @@ func CertFromBase64(base64Cert string) ([]*x509.Certificate, error) {
 	return x509.ParseCertificates(certBytes)
 }
 
+func DecodeAndVerifySignedPayload[T any](p *SignedDataVerifier, signedData string, payload T) (T, error) {
+	v, err := p.Parse(signedData, payload)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	if !v.Valid {
+		var zero T
+		return zero, errors.New("signed payload verify failed")
+	}
+	return payload, nil
+}
+
+func DecodeSignedPayload[T any](p *SignedDataVerifier, signedData string, payload T) (T, error) {
+	_, err := p.Parse(signedData, payload)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	return payload, nil
+}
+
 type JWTSignData struct {
 	Raw       string                 // Raw contains the raw token.  Populated when you [Parse] a token
 	Method    jwt.SigningMethod      // Method is the signing method used or to be used
@@ -35,7 +59,19 @@ type JWTSignData struct {
 type SignedDataVerifier struct {
 	rootCertificates []*x509.Certificate
 
+	enableOnlineChecks bool
+	environment        types.Environment
+	bundleId           string
+	appAppleId         *int64
+
 	parse *jwt.Parser
+}
+
+type AppStoreVerificationConfig struct {
+	EnableOnlineChecks bool
+	Environment        types.Environment
+	BundleId           string
+	AppAppleId         *int64
 }
 
 func NewParser(rootCertificates []*x509.Certificate) *SignedDataVerifier {
@@ -49,6 +85,26 @@ func NewParserWithDefault() *SignedDataVerifier {
 	o := &SignedDataVerifier{rootCertificates: rootCertificates}
 	o.parse = jwt.NewParser()
 	return o
+}
+
+// NewSignedDataVerifier creates a base verifier from Apple root certificates.
+func NewSignedDataVerifier(rootCertificates []*x509.Certificate) *SignedDataVerifier {
+	o := &SignedDataVerifier{rootCertificates: rootCertificates}
+	o.parse = jwt.NewParser()
+	return o
+}
+
+// ConfigureAppStore applies the bundle and environment checks used when verifying app transaction payloads.
+// The environment value should be "Sandbox" or "Production".
+func (p *SignedDataVerifier) ConfigureAppStore(cfg AppStoreVerificationConfig) error {
+	if cfg.Environment == types.EnvProduction && cfg.AppAppleId == nil {
+		return errors.New("appAppleId is required for Production environment")
+	}
+	p.enableOnlineChecks = cfg.EnableOnlineChecks
+	p.environment = cfg.Environment
+	p.bundleId = cfg.BundleId
+	p.appAppleId = cfg.AppAppleId
+	return nil
 }
 
 func (p *SignedDataVerifier) Parse(tokenString string, payload interface{}) (*JWTSignData, error) {
@@ -69,7 +125,7 @@ func (p *SignedDataVerifier) Parse(tokenString string, payload interface{}) (*JW
 		return token, errors.New("invalid cert")
 	}
 	chain, ok := sChain.([]interface{})
-	if !ok || 3 != len(chain) {
+	if !ok || len(chain) < 2 {
 		return token, errors.New("invalid chain length")
 	}
 
@@ -85,6 +141,9 @@ func (p *SignedDataVerifier) Parse(tokenString string, payload interface{}) (*JW
 		}
 		certificateChain = append(certificateChain, cert...)
 	}
+	if len(certificateChain) < 2 {
+		return token, errors.New("invalid chain length")
+	}
 	key, err := p.verifyCertificateChain(certificateChain[0], certificateChain[1])
 	if err != nil {
 		return token, err
@@ -94,6 +153,10 @@ func (p *SignedDataVerifier) Parse(tokenString string, payload interface{}) (*JW
 
 	if err != nil {
 		return token, newError("", jwt.ErrTokenSignatureInvalid, err)
+	}
+
+	if err := p.validateClaims(payload); err != nil {
+		return token, err
 	}
 
 	// No errors so far, token is valid.
@@ -127,10 +190,15 @@ func (p *SignedDataVerifier) parseUnverified(data string, payload interface{}) (
 		return token, parts, newError("could not base64 decode claim", jwt.ErrTokenMalformed, err)
 	}
 
-	err = json.Unmarshal(claimBytes, &payload)
-
+	err = json.Unmarshal(claimBytes, payload)
 	if err != nil {
 		return token, parts, newError("could not JSON decode payload", jwt.ErrTokenMalformed, err)
+	}
+
+	if validator, ok := payload.(interface{ Validate() error }); ok {
+		if err = validator.Validate(); err != nil {
+			return token, parts, newError("payload validation failed", jwt.ErrTokenInvalidClaims, err)
+		}
 	}
 
 	// Lookup signature method
@@ -154,8 +222,39 @@ func (p *SignedDataVerifier) verifyCertificateChain(leaf *x509.Certificate, inte
 	intermediateCAs.AddCert(intermediate)
 
 	_, err := leaf.Verify(x509.VerifyOptions{Roots: rootCAs, Intermediates: intermediateCAs})
-	pubKey := (leaf.PublicKey).(*ecdsa.PublicKey)
+	pubKey, ok := leaf.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, errors.New("leaf certificate public key is not ecdsa")
+	}
 	return pubKey, err
+}
+
+type bundleIDProvider interface {
+	BundleID() string
+}
+
+type environmentProvider interface {
+	EnvironmentValue() string
+}
+
+func (p *SignedDataVerifier) validateClaims(payload interface{}) error {
+	if p.bundleId != "" {
+		if bundleProvider, ok := payload.(bundleIDProvider); ok {
+			if bundleProvider.BundleID() != p.bundleId {
+				return fmt.Errorf("bundle id mismatch: got %q want %q", bundleProvider.BundleID(), p.bundleId)
+			}
+		}
+	}
+
+	if p.environment != "" {
+		if envProvider, ok := payload.(environmentProvider); ok {
+			if envProvider.EnvironmentValue() != p.environment {
+				return fmt.Errorf("environment mismatch: got %q want %q", envProvider.EnvironmentValue(), p.environment)
+			}
+		}
+	}
+
+	return nil
 }
 
 func newError(message string, err error, more ...error) error {

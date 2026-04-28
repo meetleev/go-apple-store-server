@@ -1,12 +1,12 @@
-package models
+package types
 
 // Environment
 // The server environment, either sandbox or production.
 type Environment = string
 
 const (
-	EnvProduct Environment = "Production"
-	EnvSandbox Environment = "Sandbox"
+	EnvProduction Environment = "Production"
+	EnvSandbox    Environment = "Sandbox"
 )
 
 // Status
@@ -129,4 +129,12 @@ const (
 	// PurchaseTypeNonRenewingSubscription
 	// A non-renewing subscription
 	PurchaseTypeNonRenewingSubscription PurchaseType = "Non-Renewing Subscription"
+)
+
+type AdvancedCommercePriceIncreaseInfoStatus = string
+
+const (
+	AdvancedCommercePriceIncreaseInfoStatusScheduled AdvancedCommercePriceIncreaseInfoStatus = "SCHEDULED"
+	AdvancedCommercePriceIncreaseInfoStatusPending   AdvancedCommercePriceIncreaseInfoStatus = "PENDING"
+	AdvancedCommercePriceIncreaseInfoStatusAccepted  AdvancedCommercePriceIncreaseInfoStatus = "ACCEPTED"
 )
